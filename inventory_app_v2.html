@@ -493,7 +493,7 @@ body{background:var(--bg);color:var(--tx);font-family:'Hiragino Sans','Noto Sans
 // ============================================================
 // グローバル
 // ============================================================
-var GAS    = GAS_URL;
+var GAS    = localStorage.getItem('gasUrl_v3') || GAS_URL;
 var master = {};
 var config = { names:[], devices:[], shelves:[] };
 var camStreams = {};
@@ -501,6 +501,8 @@ var camStreams = {};
 // カート
 var coCart = {}; // { itemId: { id, item, desc, spec, qty } }
 var rtCart = {};
+var coShelf = '';
+var rtShelf = '';
 
 // 新規登録状態
 var rg = { item:'', desc:'', spec:'', devices:[], qty:1, name:'', shelfOk:false };
@@ -653,6 +655,18 @@ function setLd(on, msg) {
   document.getElementById('ld').className = on ? 'ld on' : 'ld';
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function sameShelf(a, b){ return String(a || '').trim() === String(b || '').trim(); }
+function shelfMismatchIds(cart, shelf) {
+  return Object.keys(cart).filter(function(id) {
+    return master[id] && !sameShelf(master[id].shelf, shelf);
+  });
+}
+function formatShelfMismatch(cart, ids, shelf) {
+  return ids.map(function(id) {
+    var p = master[id] || {};
+    return (cart[id] ? cart[id].item : id) + '（登録棚:' + (p.shelf || '未設定') + ' / 読取棚:' + shelf + '）';
+  }).join('\n');
+}
 
 // ============================================================
 // カメラ共通
@@ -774,6 +788,7 @@ function coToggle(id) {
   if (coCart[id]) {
     delete coCart[id];
   } else {
+    if ((Number(p.stock) || 0) <= 0) { showToast('在庫が0個です。持ち出しできません。', 'wn'); return; }
     coCart[id] = { id:id, item:p.item, desc:p.desc, spec:p.spec, qty:1 };
   }
   coUpdateRow(id);
@@ -782,7 +797,14 @@ function coToggle(id) {
 
 function coAdjQty(id, d) {
   if (!coCart[id]) { coCart[id] = { id:id, item:master[id].item, desc:master[id].desc, spec:master[id].spec, qty:1 }; }
-  coCart[id].qty = Math.max(1, coCart[id].qty + d);
+  var stock = Number(master[id] && master[id].stock) || 0;
+  coCart[id].qty = Math.min(stock, Math.max(1, coCart[id].qty + d));
+  if (stock <= 0) {
+    coCart[id].qty = 1;
+    showToast('在庫が0個です。持ち出しできません。', 'wn');
+  } else if (coCart[id].qty === stock && d > 0) {
+    showToast('現在庫を超える数量は選べません', 'wn');
+  }
   var el = document.getElementById('co-qty-' + id); if (el) el.textContent = coCart[id].qty;
 }
 
@@ -806,8 +828,10 @@ function coUpdateCartBtn() {
 
 function coGoStep2() {
   if (!Object.keys(coCart).length) { showToast('部品を選択してください', 'wn'); return; }
+  var noStock = Object.keys(coCart).filter(function(id){ return (Number(master[id] && master[id].stock) || 0) <= 0; });
+  if (noStock.length) { showToast('在庫0個の部品が含まれています', 'wn'); return; }
   stopAllCams();
-  coShelfScanned = false; coName = '';
+  coShelfScanned = false; coName = ''; coShelf = '';
   document.getElementById('co-step2').style.display = '';
   document.getElementById('co-shelfOk').className = 'match-ok';
   document.getElementById('co-err').className = 'err-box';
@@ -820,7 +844,20 @@ function coGoStep2() {
 function coManualShelf() { var v = document.getElementById('co-mInput').value.trim(); if (v) coOnShelf(v); }
 function coOnShelf(val) {
   if (navigator.vibrate) navigator.vibrate(60);
+  var shelf = String(val || '').trim();
+  var mismatches = shelfMismatchIds(coCart, shelf);
+  if (mismatches.length) {
+    coShelfScanned = false; coShelf = '';
+    document.getElementById('co-shelfOk').className = 'match-ok';
+    document.getElementById('co-err').textContent = '棚番号が一致しません。\n' + formatShelfMismatch(coCart, mismatches, shelf);
+    document.getElementById('co-err').className = 'err-box on';
+    document.getElementById('co-sn2').classList.remove('step-done');
+    document.getElementById('co-step3').style.display = 'none';
+    coChkExec();
+    return;
+  }
   coShelfScanned = true;
+  coShelf = shelf;
   document.getElementById('co-shelfOk').className = 'match-ok on';
   document.getElementById('co-err').className = 'err-box';
   document.getElementById('co-sn2').classList.add('step-done');
@@ -861,7 +898,7 @@ function coExec() {
   var btn = document.getElementById('co-exec'); if (btn.disabled) return;
   btn.disabled = true; setLd(true, '持ち出し処理中...');
   var items = Object.keys(coCart).map(function(id){ return { itemId:id, qty:coCart[id].qty }; });
-  fetch(GAS, { method:'POST', body:JSON.stringify({ action:'checkout', name:coName, items:items }) })
+  fetch(GAS, { method:'POST', body:JSON.stringify({ action:'checkout', name:coName, shelf:coShelf, items:items }) })
   .then(function(r){ return r.json(); }).then(function(j) {
     if (j.status === 'ok') {
       var errs = (j.results||[]).filter(function(r){ return r.status === 'error'; });
@@ -879,7 +916,7 @@ function coExec() {
 }
 
 function coReset() {
-  coCart = {}; coShelfScanned = false; coName = '';
+  coCart = {}; coShelfScanned = false; coName = ''; coShelf = '';
   document.getElementById('co-search').value = '';
   document.getElementById('co-sclear').className = 'search-clear';
   document.getElementById('co-list').innerHTML = '';
@@ -966,7 +1003,7 @@ function rtUpdateCartBtn() {
 function rtGoStep2() {
   if (!Object.keys(rtCart).length) { showToast('部品を選択してください', 'wn'); return; }
   stopAllCams();
-  rtShelfScanned = false; rtName = '';
+  rtShelfScanned = false; rtName = ''; rtShelf = '';
   document.getElementById('rt-step2').style.display = '';
   document.getElementById('rt-shelfOk').className = 'match-ok';
   document.getElementById('rt-err').className = 'err-box';
@@ -978,7 +1015,20 @@ function rtGoStep2() {
 function rtManualShelf() { var v = document.getElementById('rt-mInput').value.trim(); if (v) rtOnShelf(v); }
 function rtOnShelf(val) {
   if (navigator.vibrate) navigator.vibrate(60);
+  var shelf = String(val || '').trim();
+  var mismatches = shelfMismatchIds(rtCart, shelf);
+  if (mismatches.length) {
+    rtShelfScanned = false; rtShelf = '';
+    document.getElementById('rt-shelfOk').className = 'match-ok';
+    document.getElementById('rt-err').textContent = '棚番号が一致しません。\n' + formatShelfMismatch(rtCart, mismatches, shelf);
+    document.getElementById('rt-err').className = 'err-box on';
+    document.getElementById('rt-sn2').classList.remove('step-done');
+    document.getElementById('rt-step3').style.display = 'none';
+    rtChkExec();
+    return;
+  }
   rtShelfScanned = true;
+  rtShelf = shelf;
   document.getElementById('rt-shelfOk').className = 'match-ok on';
   document.getElementById('rt-err').className = 'err-box';
   document.getElementById('rt-sn2').classList.add('step-done');
@@ -1010,7 +1060,7 @@ function rtExec() {
   var btn = document.getElementById('rt-exec'); if (btn.disabled) return;
   btn.disabled = true; setLd(true, '返却処理中...');
   var items = Object.keys(rtCart).map(function(id){ return { itemId:id, qty:rtCart[id].qty }; });
-  fetch(GAS, { method:'POST', body:JSON.stringify({ action:'return', name:rtName, items:items }) })
+  fetch(GAS, { method:'POST', body:JSON.stringify({ action:'return', name:rtName, shelf:rtShelf, items:items }) })
   .then(function(r){ return r.json(); }).then(function(j) {
     if (j.status === 'ok') {
       showToast('✅ 返却完了（' + items.length + '種類）', 'ok');
@@ -1021,7 +1071,7 @@ function rtExec() {
   .finally(function(){ btn.disabled = false; setLd(false); });
 }
 function rtReset() {
-  rtCart = {}; rtShelfScanned = false; rtName = '';
+  rtCart = {}; rtShelfScanned = false; rtName = ''; rtShelf = '';
   document.getElementById('rt-search').value = '';
   document.getElementById('rt-sclear').className = 'search-clear';
   document.getElementById('rt-list').innerHTML = '';
@@ -1139,8 +1189,10 @@ function rgExec() {
   .then(function(r){ return r.json(); }).then(function(j) {
     if (j.status === 'ok') {
       showToast('✅ ' + j.id + ' で登録しました', 'ok');
-      fetch(GAS + '?action=getMaster').then(function(r){ return r.json(); }).then(function(j2){ master = j2.master || {}; });
-      rgReset(); goHome();
+      return fetch(GAS + '?action=getMaster').then(function(r){ return r.json(); }).then(function(j2){
+        master = j2.master || {};
+        rgReset(); goHome();
+      });
     } else showToast('❌ ' + (j.error||'登録失敗'), 'er');
   }).catch(function(e){ showToast('❌ ' + e.message, 'er'); })
   .finally(function(){ btn.disabled = false; setLd(false); });
@@ -1194,7 +1246,7 @@ function ivOnShelf(shelf) {
           '<span class="iv-val" id="iv-val-' + idx + '">' + it.actualStock + '</span>' +
           '<button onclick="ivAdj(' + idx + ',1)">＋</button>' +
         '</div>' +
-        '<div class="inv-diff zero" id="iv-diff-' + idx + '">差異：0</div>' +
+        '<div class="diff-zero" id="iv-diff-' + idx + '">差異：0</div>' +
       '</div>';
     le.appendChild(d);
   });
@@ -1217,7 +1269,7 @@ function ivAdj(idx, d) {
   var diff = it.actualStock - it.systemStock;
   var el = document.getElementById('iv-diff-' + idx);
   el.textContent = '差異：' + (diff > 0 ? '+' : '') + diff;
-  el.className = 'inv-diff ' + (diff > 0 ? 'pos' : diff < 0 ? 'neg' : 'zero');
+  el.className = diff > 0 ? 'diff-pos' : diff < 0 ? 'diff-neg' : 'diff-zero';
 }
 function ivSelName(el) { iv.name = selBtn(el, 'iv-nm', 's-nm'); ivShowDiff(); }
 function ivShowDiff() {
