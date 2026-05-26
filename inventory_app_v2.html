@@ -502,7 +502,7 @@ var coCart = {}; // { itemId: { id, item, desc, spec, qty } }
 var rtCart = {};
 
 // 新規登録状態
-var rg = { item:'', desc:'', spec:'', device:'', qty:1, name:'', shelfOk:false };
+var rg = { item:'', desc:'', spec:'', devices:[], qty:1, name:'', shelfOk:false };
 
 // 棚卸し状態
 var iv = { shelf:'', items:[], name:'' };
@@ -612,13 +612,20 @@ function buildBtns() {
     el.className = 'bg ' + c;
     config.names.forEach(function(n) { el.appendChild(mkBtn(n, 's-nm', id.slice(0,2) + 'SelName(this)')); });
   });
-  // 装置名
+  // 装置名（複数選択対応）
   var de = document.getElementById('rg-dev');
   if (de) {
     de.innerHTML = '';
     var dc = config.devices.length <= 2 ? 'c2' : 'c3';
     de.className = 'bg ' + dc;
-    config.devices.forEach(function(d) { de.appendChild(mkBtn(d, 's-dev', 'rgSelDev(this)')); });
+    config.devices.forEach(function(d) {
+      var b = document.createElement('button');
+      b.className = 'sb2';
+      b.setAttribute('data-v', d);
+      b.textContent = d;
+      b.setAttribute('onclick', 'rgToggleDev(this)');
+      de.appendChild(b);
+    });
   }
 }
 function mkBtn(label, cls, onclick) {
@@ -1040,7 +1047,18 @@ function rgManualItem() {
   var v = document.getElementById('rg-mInput1').value.trim();
   if (v) rgOnBarcode(v); else showToast('品目名を入力してください', 'wn');
 }
-function rgSelDev(el) { rg.device = selBtn(el, 'rg-dev', 's-dev'); rgChkToShelf(); }
+function rgToggleDev(el) {
+  var val = el.getAttribute('data-v');
+  var idx = rg.devices.indexOf(val);
+  if (idx >= 0) {
+    rg.devices.splice(idx, 1);
+    el.className = 'sb2';
+  } else {
+    rg.devices.push(val);
+    el.className = 'sb2 s-dev';
+  }
+  rgChkToShelf();
+}
 function rgSelName(el) { rg.name = selBtn(el, 'rg-nm', 's-nm'); rgChkToShelf(); }
 function rgAdjQty(d) {
   rg.qty = Math.max(1, rg.qty + d);
@@ -1048,7 +1066,7 @@ function rgAdjQty(d) {
 }
 function rgChkToShelf() {
   var item = document.getElementById('rg-item') ? document.getElementById('rg-item').value.trim() : '';
-  var ok = item && rg.device && rg.name;
+  var ok = item && rg.devices.length > 0 && rg.name;
   document.getElementById('rg-toShelf').style.display = ok ? 'block' : 'none';
 }
 function rgGoShelf() {
@@ -1083,7 +1101,7 @@ function rgExec() {
     action:'register', item:item,
     desc:document.getElementById('rg-desc').value.trim(),
     spec:document.getElementById('rg-spec').value.trim(),
-    device:rg.device, qty:rg.qty, shelf:rg.shelf, name:rg.name
+    device:rg.devices.join(','), qty:rg.qty, shelf:rg.shelf, name:rg.name
   }) })
   .then(function(r){ return r.json(); }).then(function(j) {
     if (j.status === 'ok') {
@@ -1095,7 +1113,7 @@ function rgExec() {
   .finally(function(){ btn.disabled = false; setLd(false); });
 }
 function rgReset() {
-  rg = { item:'', desc:'', spec:'', device:'', qty:1, name:'', shelfOk:false };
+  rg = { item:'', desc:'', spec:'', devices:[], qty:1, name:'', shelfOk:false };
   ['rg-item','rg-desc','rg-spec','rg-mInput1'].forEach(function(id){ document.getElementById(id).value = ''; });
   document.getElementById('rg-qty-val').textContent = '1';
   ['rg-step2','rg-step3','rg-step4','rg-step5','rg-step6'].forEach(function(i){ document.getElementById(i).style.display = 'none'; });
