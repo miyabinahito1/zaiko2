@@ -377,6 +377,7 @@ body{background:var(--bg);color:var(--tx);font-family:'Hiragino Sans','Noto Sans
         <input type="text" id="rg-mInput1" placeholder="品目名を手入力">
         <button class="gbtn gray" onclick="rgManualItem()">✔ この品目名で登録</button>
       </div>
+      <div class="err-box" id="rg-dup-err"></div>
     </div>
     <!-- STEP2: 情報入力 -->
     <div class="card" id="rg-step2" style="display:none">
@@ -1036,6 +1037,33 @@ function rtReset() {
 // ============================================================
 function rgOnBarcode(val) {
   if (navigator.vibrate) navigator.vibrate(60);
+  var dupErr = document.getElementById('rg-dup-err');
+  dupErr.className = 'err-box';
+
+  // 品目名で既存チェック（完全一致）
+  var dupId = null, dupPart = null;
+  Object.keys(master).forEach(function(id) {
+    if (master[id].item === val) { dupId = id; dupPart = master[id]; }
+  });
+
+  if (dupId) {
+    dupErr.innerHTML =
+      '⛔ すでに登録されています<br>' +
+      '<span style="font-size:12px;color:var(--ac);font-family:monospace">' + dupId + '</span>　' +
+      '<span style="font-size:13px;font-weight:700">' + esc(dupPart.item) + '</span><br>' +
+      '<span style="font-size:12px;color:var(--mt)">' +
+        (dupPart.desc ? esc(dupPart.desc) : '') +
+        (dupPart.spec ? '　' + esc(dupPart.spec) : '') +
+      '</span><br>' +
+      '<span style="font-size:12px;color:var(--ac2)">在庫：' + dupPart.stock + '個</span>' +
+      '<button class="gbtn ac" style="margin-top:12px" onclick="rgRescan()">📷 再スキャン</button>';
+    dupErr.className = 'err-box on';
+    ['rg-step2','rg-step3','rg-step4','rg-step5'].forEach(function(i){ document.getElementById(i).style.display = 'none'; });
+    document.getElementById('rg-toShelf').style.display = 'none';
+    document.getElementById('rg-exec').className = 'exec-btn';
+    return;
+  }
+
   rg.item = val;
   document.getElementById('rg-item').value = val;
   document.getElementById('rg-sn1').classList.add('step-done');
@@ -1046,6 +1074,11 @@ function rgOnBarcode(val) {
 function rgManualItem() {
   var v = document.getElementById('rg-mInput1').value.trim();
   if (v) rgOnBarcode(v); else showToast('品目名を入力してください', 'wn');
+}
+function rgRescan() {
+  document.getElementById('rg-dup-err').className = 'err-box';
+  document.getElementById('rg-mInput1').value = '';
+  startCamKey('rg1');
 }
 function rgToggleDev(el) {
   var val = el.getAttribute('data-v');
@@ -1121,6 +1154,7 @@ function rgReset() {
   document.getElementById('rg-exec').className = 'exec-btn';
   document.getElementById('rg-shelfOk').className = 'match-ok';
   document.getElementById('rg-err').className = 'err-box';
+  document.getElementById('rg-dup-err').className = 'err-box';
   document.querySelectorAll('#screen-register .sb2').forEach(function(b){ b.className = 'sb2'; });
   ['rg-sn1','rg-sn6'].forEach(function(i){ document.getElementById(i).classList.remove('step-done'); });
 }
